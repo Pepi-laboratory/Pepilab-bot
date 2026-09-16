@@ -311,20 +311,20 @@ async def cmd_cagnotte_admin(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not args:
         conn = get_db()
         rows = conn.execute("""
-            SELECT first_name, username, cagnotte, payment_method, payment_details
-            FROM affiliates WHERE cagnotte != 0 OR payment_method != ''
+            SELECT user_id, first_name, username, cagnotte, payment_method, payment_details
+            FROM affiliates
             ORDER BY cagnotte DESC
         """).fetchall()
         conn.close()
 
         if not rows:
-            await update.message.reply_text("Aucune cagnotte active.")
+            await update.message.reply_text("Aucun ambassadeur. Les gens doivent faire /monlien d'abord.")
             return
 
         text = "🏦 *CAGNOTTES*\n\n"
         total = 0
         for r in rows:
-            u = f"@{r['username']}" if r["username"] else "—"
+            u = f"@{r['username']}" if r["username"] else f"ID:`{r['user_id']}`"
             pay = _payment_label(r["payment_method"]) if r["payment_method"] else "❌"
             c = r["cagnotte"] or 0
             total += c
@@ -350,14 +350,30 @@ async def cmd_cagnotte_admin(update: Update, context: ContextTypes.DEFAULT_TYPE)
     amount_str = args[1].strip()
 
     conn = get_db()
-    affiliate = conn.execute(
-        "SELECT * FROM affiliates WHERE username = ? COLLATE NOCASE", (target,)
-    ).fetchone()
 
+    # Chercher par user_id d'abord (le plus fiable)
+    affiliate = None
+    if target.isdigit():
+        affiliate = conn.execute(
+            "SELECT * FROM affiliates WHERE user_id = ?", (int(target),)
+        ).fetchone()
+
+    # Sinon par username
     if not affiliate:
-        # Essayer par prénom
+        affiliate = conn.execute(
+            "SELECT * FROM affiliates WHERE username = ? COLLATE NOCASE", (target,)
+        ).fetchone()
+
+    # Sinon par prénom
+    if not affiliate:
         affiliate = conn.execute(
             "SELECT * FROM affiliates WHERE first_name = ? COLLATE NOCASE", (target,)
+        ).fetchone()
+
+    # Sinon par code affilié
+    if not affiliate:
+        affiliate = conn.execute(
+            "SELECT * FROM affiliates WHERE ref_code = ? COLLATE NOCASE", (target,)
         ).fetchone()
 
     if not affiliate:
