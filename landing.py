@@ -11,7 +11,7 @@ import hashlib
 import logging
 from datetime import datetime
 
-from flask import Flask, request, render_template_string, redirect
+from flask import Flask, request, render_template_string, redirect, jsonify
 
 app = Flask(__name__)
 
@@ -230,6 +230,26 @@ def accept_and_join(ref_code):
 @app.route("/")
 def home():
     return redirect(f"https://t.me/{BOT_USERNAME}")
+
+
+@app.route("/api/recent-accepts")
+def recent_accepts():
+    """API pour le bot — retourne les derniers clics 'accepté' (10 min)."""
+    try:
+        from datetime import timedelta
+        cutoff = (datetime.now() - timedelta(minutes=10)).isoformat()
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """SELECT ref_code, clicked_at FROM clicks 
+               WHERE accepted = 1 AND clicked_at > ?
+               ORDER BY clicked_at DESC LIMIT 20""",
+            (cutoff,),
+        ).fetchall()
+        conn.close()
+        return jsonify([{"ref_code": r["ref_code"], "clicked_at": r["clicked_at"]} for r in rows])
+    except Exception as e:
+        return jsonify([])
 
 
 init_clicks_db()
