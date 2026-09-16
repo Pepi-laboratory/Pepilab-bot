@@ -193,14 +193,23 @@ async def track_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    await update.message.reply_text(
-        f"Salut {user.first_name} ! 👋\n\n"
-        f"🔗 Devenir ambassadeur → /monlien\n"
-        f"📊 Tes stats → /messtats\n"
-        f"💰 Mode de paiement → /paiement\n"
-        f"🏦 Ma cagnotte → /macagnotte\n"
-        f"❓ Aide → /aide",
-    )
+    if is_admin(user.id):
+        await update.message.reply_text(
+            f"Salut {user.first_name} ! 👋\n\n"
+            f"🔗 Devenir ambassadeur → /monlien\n"
+            f"📊 Tes stats → /messtats\n"
+            f"💰 Mode de paiement → /paiement\n"
+            f"🏦 Ma cagnotte → /macagnotte\n"
+            f"❓ Aide → /aide",
+        )
+    else:
+        await update.message.reply_text(
+            f"Salut {user.first_name} ! 👋\n\n"
+            f"🔗 Devenir ambassadeur → /monlien\n"
+            f"📊 Tes stats → /messtats\n"
+            f"💰 Mode de paiement → /paiement\n"
+            f"🏦 Ma cagnotte → /macagnotte",
+        )
 
 
 async def cmd_groupid(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -475,12 +484,12 @@ async def cmd_cagnotte_admin(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # ═══════════════════════════════════════════════════════════════════════
 
 def _payment_label(method: str) -> str:
-    return {"code_promo": "🏷️ Code promo", "rib": "🏦 RIB", "crypto": "₿ Crypto"}.get(method, "")
+    return {"code_promo": "🏷️ Bon de réduction", "rib": "🏦 RIB", "crypto": "₿ Crypto"}.get(method, "")
 
 
 async def _ask_payment_method(update: Update):
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🏷️ Code promo", callback_data="pay_code_promo")],
+        [InlineKeyboardButton("🏷️ Bon de réduction sur vos commandes", callback_data="pay_code_promo")],
         [InlineKeyboardButton("🏦 Virement (RIB)", callback_data="pay_rib")],
         [InlineKeyboardButton("₿ Crypto (wallet)", callback_data="pay_crypto")],
         [InlineKeyboardButton("⏭️ Plus tard", callback_data="pay_later")],
@@ -524,7 +533,7 @@ async def cmd_paiement(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += "Non défini\n\nChoisis ton mode :"
 
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🏷️ Code promo", callback_data="pay_code_promo")],
+        [InlineKeyboardButton("🏷️ Bon de réduction sur vos commandes", callback_data="pay_code_promo")],
         [InlineKeyboardButton("🏦 Virement (RIB)", callback_data="pay_rib")],
         [InlineKeyboardButton("₿ Crypto (wallet)", callback_data="pay_crypto")],
     ])
@@ -555,7 +564,9 @@ async def callback_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
         conn.close()
         await query.edit_message_text(
-            "🏷️ *Code promo sélectionné !*\n🔄 Changer → /paiement",
+            "🏷️ *Bon de réduction sélectionné !*\n\n"
+            "Tu recevras des bons de réduction sur tes commandes.\n"
+            "🔄 Changer → /paiement",
             parse_mode="Markdown",
         )
     elif data == "pay_rib":
@@ -566,7 +577,13 @@ async def callback_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
         conn.close()
         await query.edit_message_text(
-            "🏦 *Virement sélectionné*\n\nEnvoie-moi ton IBAN dans le prochain message.",
+            "🏦 *Virement sélectionné*\n\n"
+            "Envoie-moi tes coordonnées bancaires dans un seul message, comme ceci :\n\n"
+            "`Nom : Jean Dupont\n"
+            "IBAN : FR76 3000 4000 ...\n"
+            "BIC : BNPAFRPP\n"
+            "Banque : BNP Paribas\n"
+            "Adresse banque : 16 bd des Italiens, Paris`",
             parse_mode="Markdown",
         )
     elif data == "pay_crypto":
@@ -604,24 +621,34 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     input_type = affiliate["awaiting_input"]
 
     if input_type == "rib":
-        clean = text.replace(" ", "").upper()
-        if len(clean) < 15:
-            await update.message.reply_text("⚠️ IBAN trop court. Réessaie ou /paiement pour changer.")
+        # Vérifier que le message contient assez d'infos
+        if len(text) < 30 or "iban" not in text.lower() and "fr" not in text.lower() and len(text.split("\n")) < 2:
+            await update.message.reply_text(
+                "⚠️ Il manque des infos. Envoie tout dans un seul message :\n\n"
+                "`Nom : ...\n"
+                "IBAN : ...\n"
+                "BIC : ...\n"
+                "Banque : ...\n"
+                "Adresse banque : ...`",
+                parse_mode="Markdown",
+            )
             conn.close()
             return
         conn.execute(
             "UPDATE affiliates SET payment_details=?, awaiting_input='' WHERE user_id=?",
-            (clean, user.id),
+            (text, user.id),
         )
         conn.commit()
         conn.close()
-        masked = f"{clean[:8]}...{clean[-4:]}" if len(clean) > 12 else clean
-        await update.message.reply_text(f"✅ *RIB enregistré !*\n📋 `{masked}`", parse_mode="Markdown")
+        await update.message.reply_text(
+            "✅ *Coordonnées bancaires enregistrées !*\n🔄 Modifier → /paiement",
+            parse_mode="Markdown",
+        )
         for aid in ADMIN_IDS:
             try:
                 await context.bot.send_message(
                     chat_id=aid,
-                    text=f"🏦 RIB — {user.first_name} @{user.username or '—'}\n`{clean}`",
+                    text=f"🏦 *RIB enregistré* — {user.first_name} @{user.username or '—'}\n\n{text}",
                     parse_mode="Markdown",
                 )
             except Exception:
@@ -784,14 +811,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/aide — Aide"
         )
     else:
-        text = (
-            "🤖 *Commandes :*\n\n"
-            "/monlien — Mon lien d'ambassadeur\n"
-            "/messtats — Mes stats\n"
-            "/macagnotte — Ma cagnotte\n"
-            "/paiement — Mode de rémunération\n"
-            "/aide — Aide"
-        )
+        return
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
