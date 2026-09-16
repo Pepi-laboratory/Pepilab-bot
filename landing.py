@@ -1,7 +1,8 @@
 """
 Landing page d'affiliation — Pepi-Lab
 ======================================
-Résout le problème des navigateurs intégrés (Snapchat/Instagram/TikTok)
+Version corrigée : pas de vérification du code en base,
+juste log du clic et redirection vers le bot.
 """
 
 import os
@@ -14,28 +15,39 @@ from flask import Flask, redirect, request, render_template_string
 
 app = Flask(__name__)
 
-BOT_USERNAME = os.environ["BOT_USERNAME"]
-DB_PATH = os.environ.get("DB_PATH", "affiliates.db")
+BOT_USERNAME = os.environ.get("BOT_USERNAME", "Pepilabobot")
+DB_PATH = os.environ.get("DB_PATH", "clicks.db")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def get_db():
+def init_clicks_db():
     conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS clicks (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            ref_code    TEXT NOT NULL,
+            clicked_at  TEXT NOT NULL,
+            ip_hash     TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
 
 
 def log_click(ref_code: str, ip: str):
-    ip_hash = hashlib.sha256(ip.encode()).hexdigest()[:16]
-    conn = get_db()
-    conn.execute(
-        "INSERT INTO clicks (ref_code, clicked_at, ip_hash) VALUES (?, ?, ?)",
-        (ref_code, datetime.now().isoformat(), ip_hash),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        ip_hash = hashlib.sha256(ip.encode()).hexdigest()[:16]
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute(
+            "INSERT INTO clicks (ref_code, clicked_at, ip_hash) VALUES (?, ?, ?)",
+            (ref_code, datetime.now().isoformat(), ip_hash),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Erreur log clic: {e}")
 
 
 LANDING_HTML = """
@@ -219,15 +231,15 @@ LANDING_HTML = """
 
     <script>
         function copyCode() {
-            const code = "{{ ref_code }}";
-            navigator.clipboard.writeText("/code " + code).then(() => {
+            const code = "/code {{ ref_code }}";
+            navigator.clipboard.writeText(code).then(() => {
                 document.getElementById('copy-hint').textContent = '✅ Copié !';
                 setTimeout(() => {
                     document.getElementById('copy-hint').textContent = 'Appuie pour copier';
                 }, 2000);
             }).catch(() => {
                 const el = document.createElement('textarea');
-                el.value = "/code " + code;
+                el.value = code;
                 document.body.appendChild(el);
                 el.select();
                 document.execCommand('copy');
@@ -259,18 +271,10 @@ LANDING_HTML = """
 
 @app.route("/ref/<ref_code>")
 def referral_landing(ref_code):
-    conn = get_db()
-    affiliate = conn.execute(
-        "SELECT * FROM affiliates WHERE ref_code = ?", (ref_code,)
-    ).fetchone()
-    conn.close()
-
-    if not affiliate:
-        return "Lien invalide.", 404
-
+    """Affiche la page et logge le clic — pas de vérification en base."""
     client_ip = request.headers.get("X-Forwarded-For", request.remote_addr)
     log_click(ref_code, client_ip)
-    logger.info(f"Clic affilié: {ref_code} ({affiliate['first_name']})")
+    logger.info(f"Clic affilié: code={ref_code}")
 
     return render_template_string(
         LANDING_HTML,
@@ -283,6 +287,9 @@ def referral_landing(ref_code):
 def home():
     return redirect(f"https://t.me/{BOT_USERNAME}")
 
+
+# Init DB au démarrage
+init_clicks_db()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
