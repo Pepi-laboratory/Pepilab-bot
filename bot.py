@@ -152,9 +152,10 @@ async def track_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 if affiliate:
                     aff_name = affiliate["first_name"]
-                    aff_username = f"@{affiliate['username']}" if affiliate["username"] else f"ID:`{affiliate['user_id']}`"
+                    aff_username = f"@{affiliate['username']}" if affiliate["username"] else "pas de @"
                     affiliate_info = (
                         f"\n\n🤝 *Parrainé par :* {aff_name} {aff_username}\n"
+                        f"🆔 ID parrain : `{affiliate['user_id']}`\n"
                         f"🔗 Code : `{ref_code}`"
                     )
                 else:
