@@ -1,8 +1,5 @@
 """
-Landing page d'affiliation — Pepi-Lab
-======================================
-Version corrigée : pas de vérification du code en base,
-juste log du clic et redirection vers le bot.
+Landing page d'affiliation — Pepi-Lab (v3 - fix redirect)
 """
 
 import os
@@ -203,7 +200,7 @@ LANDING_HTML = """
             Bienvenue ! On t'envoie vers notre communauté Telegram.
         </p>
         
-        <a href="tg://resolve?domain={{ bot_username }}&start={{ ref_code }}" 
+        <a href="https://t.me/{{ bot_username }}?start={{ ref_code }}" 
            class="btn-telegram" id="tg-link">
             📲 Ouvrir dans Telegram
         </a>
@@ -211,16 +208,16 @@ LANDING_HTML = """
         <div class="separator"><span>Si ça ne s'ouvre pas</span></div>
         
         <div class="fallback">
-            <p>Ouvre Telegram, cherche <strong>@{{ bot_username }}</strong> et envoie ce code :</p>
+            <p>Ouvre Telegram, cherche <strong>@{{ bot_username }}</strong> et envoie ce message :</p>
             <div class="code-box" onclick="copyCode()" id="code-box">
-                {{ ref_code }}
+                /code {{ ref_code }}
             </div>
             <div class="copy-hint" id="copy-hint">Appuie pour copier</div>
             
             <ol class="steps">
                 <li>Ouvre Telegram</li>
                 <li>Cherche @{{ bot_username }}</li>
-                <li>Envoie : <strong>/code {{ ref_code }}</strong></li>
+                <li>Colle le message copié et envoie</li>
             </ol>
         </div>
         
@@ -231,15 +228,14 @@ LANDING_HTML = """
 
     <script>
         function copyCode() {
-            const code = "/code {{ ref_code }}";
-            navigator.clipboard.writeText(code).then(() => {
+            navigator.clipboard.writeText("/code {{ ref_code }}").then(() => {
                 document.getElementById('copy-hint').textContent = '✅ Copié !';
                 setTimeout(() => {
                     document.getElementById('copy-hint').textContent = 'Appuie pour copier';
                 }, 2000);
             }).catch(() => {
                 const el = document.createElement('textarea');
-                el.value = code;
+                el.value = "/code {{ ref_code }}";
                 document.body.appendChild(el);
                 el.select();
                 document.execCommand('copy');
@@ -248,17 +244,17 @@ LANDING_HTML = """
             });
         }
 
+        // Redirection auto via t.me (plus fiable que tg://)
         let seconds = 3;
         const countdownEl = document.getElementById('countdown');
+        const deepLink = "https://t.me/{{ bot_username }}?start={{ ref_code }}";
+        
         const timer = setInterval(() => {
             seconds--;
             countdownEl.textContent = seconds;
             if (seconds <= 0) {
                 clearInterval(timer);
-                window.location.href = "tg://resolve?domain={{ bot_username }}&start={{ ref_code }}";
-                setTimeout(() => {
-                    window.location.href = "https://t.me/{{ bot_username }}?start={{ ref_code }}";
-                }, 1500);
+                window.location.href = deepLink;
                 document.getElementById('redirect-notice').textContent = 
                     "Si Telegram ne s'ouvre pas, utilise le bouton ou le code ci-dessus.";
             }
@@ -271,11 +267,9 @@ LANDING_HTML = """
 
 @app.route("/ref/<ref_code>")
 def referral_landing(ref_code):
-    """Affiche la page et logge le clic — pas de vérification en base."""
     client_ip = request.headers.get("X-Forwarded-For", request.remote_addr)
     log_click(ref_code, client_ip)
     logger.info(f"Clic affilié: code={ref_code}")
-
     return render_template_string(
         LANDING_HTML,
         ref_code=ref_code,
@@ -288,7 +282,6 @@ def home():
     return redirect(f"https://t.me/{BOT_USERNAME}")
 
 
-# Init DB au démarrage
 init_clicks_db()
 
 if __name__ == "__main__":
