@@ -1,5 +1,8 @@
 """
-Landing page d'affiliation — Pepi-Lab (v3 - fix redirect)
+Landing page Pepi-Lab — v4 SIMPLE
+==================================
+Affiche les règles → clic → rejoint le groupe directement.
+Tracking par clics côté serveur.
 """
 
 import os
@@ -8,11 +11,12 @@ import hashlib
 import logging
 from datetime import datetime
 
-from flask import Flask, redirect, request, render_template_string
+from flask import Flask, request, render_template_string, redirect
 
 app = Flask(__name__)
 
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "Pepilabobot")
+GROUP_LINK = os.environ.get("GROUP_LINK", "https://t.me/+d7g_9MFJ1XQxYmQ0")
 DB_PATH = os.environ.get("DB_PATH", "clicks.db")
 
 logging.basicConfig(level=logging.INFO)
@@ -26,20 +30,21 @@ def init_clicks_db():
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             ref_code    TEXT NOT NULL,
             clicked_at  TEXT NOT NULL,
-            ip_hash     TEXT
+            ip_hash     TEXT,
+            accepted    INTEGER DEFAULT 0
         )
     """)
     conn.commit()
     conn.close()
 
 
-def log_click(ref_code: str, ip: str):
+def log_click(ref_code: str, ip: str, accepted: bool = False):
     try:
         ip_hash = hashlib.sha256(ip.encode()).hexdigest()[:16]
         conn = sqlite3.connect(DB_PATH)
         conn.execute(
-            "INSERT INTO clicks (ref_code, clicked_at, ip_hash) VALUES (?, ?, ?)",
-            (ref_code, datetime.now().isoformat(), ip_hash),
+            "INSERT INTO clicks (ref_code, clicked_at, ip_hash, accepted) VALUES (?, ?, ?, ?)",
+            (ref_code, datetime.now().isoformat(), ip_hash, 1 if accepted else 0),
         )
         conn.commit()
         conn.close()
@@ -74,7 +79,7 @@ LANDING_HTML = """
             border: 1px solid rgba(255,255,255,0.08);
             border-radius: 24px;
             padding: 40px 28px;
-            max-width: 420px;
+            max-width: 440px;
             width: 100%;
             text-align: center;
         }
@@ -82,7 +87,7 @@ LANDING_HTML = """
         .logo { font-size: 52px; margin-bottom: 12px; }
         
         h1 {
-            font-size: 24px;
+            font-size: 26px;
             font-weight: 700;
             margin-bottom: 6px;
             background: linear-gradient(135deg, #a78bfa, #60a5fa);
@@ -93,102 +98,72 @@ LANDING_HTML = """
         .subtitle {
             color: #94a3b8;
             font-size: 14px;
-            margin-bottom: 32px;
+            margin-bottom: 28px;
             line-height: 1.6;
         }
-        
-        .btn-telegram {
-            display: inline-block;
-            background: linear-gradient(135deg, #0088cc, #0066aa);
-            color: white;
-            text-decoration: none;
-            padding: 16px 32px;
-            border-radius: 14px;
-            font-size: 17px;
-            font-weight: 600;
-            width: 100%;
-            transition: transform 0.15s, box-shadow 0.15s;
-            box-shadow: 0 4px 20px rgba(0,136,204,0.3);
-        }
-        
-        .btn-telegram:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 6px 24px rgba(0,136,204,0.4);
-        }
-        
-        .separator {
-            display: flex;
-            align-items: center;
-            margin: 28px 0;
-            color: #475569;
-            font-size: 13px;
-        }
-        
-        .separator::before, .separator::after {
-            content: '';
-            flex: 1;
-            border-bottom: 1px solid rgba(255,255,255,0.08);
-        }
-        
-        .separator span { padding: 0 12px; }
-        
-        .fallback {
+
+        .rules {
             background: rgba(255,255,255,0.03);
-            border-radius: 14px;
-            padding: 20px;
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 16px;
+            padding: 24px 20px;
+            text-align: left;
+            margin-bottom: 28px;
         }
-        
-        .fallback p {
-            font-size: 13px;
-            color: #94a3b8;
+
+        .rules h2 {
+            font-size: 15px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: #cbd5e1;
+            text-align: center;
+        }
+
+        .rule {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
             margin-bottom: 12px;
+            font-size: 14px;
+            color: #94a3b8;
             line-height: 1.5;
         }
+
+        .rule:last-child { margin-bottom: 0; }
+
+        .rule .check {
+            color: #4ade80;
+            font-size: 16px;
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
         
-        .code-box {
-            background: rgba(96,165,250,0.1);
-            border: 1px dashed rgba(96,165,250,0.4);
-            border-radius: 10px;
-            padding: 14px;
-            font-family: 'SF Mono', Monaco, monospace;
-            font-size: 20px;
+        .btn-join {
+            display: inline-block;
+            background: linear-gradient(135deg, #4ade80, #22c55e);
+            color: #0a0a1a;
+            text-decoration: none;
+            padding: 18px 32px;
+            border-radius: 14px;
+            font-size: 17px;
             font-weight: 700;
-            letter-spacing: 3px;
-            color: #60a5fa;
+            width: 100%;
+            transition: transform 0.15s, box-shadow 0.15s;
+            box-shadow: 0 4px 20px rgba(74,222,128,0.3);
+            border: none;
             cursor: pointer;
         }
         
-        .code-box:active { background: rgba(96,165,250,0.2); }
-        
-        .copy-hint {
+        .btn-join:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 24px rgba(74,222,128,0.4);
+        }
+
+        .note {
+            margin-top: 20px;
             font-size: 11px;
             color: #475569;
-            margin-top: 8px;
-        }
-        
-        .steps {
-            text-align: left;
-            margin-top: 16px;
-            list-style: none;
-        }
-        
-        .steps li {
-            font-size: 13px;
-            color: #94a3b8;
-            margin-bottom: 6px;
-            padding-left: 28px;
-            position: relative;
-        }
-        
-        .steps li::before { position: absolute; left: 0; }
-        .steps li:nth-child(1)::before { content: '1️⃣'; }
-        .steps li:nth-child(2)::before { content: '2️⃣'; }
-        .steps li:nth-child(3)::before { content: '3️⃣'; }
-        
-        .redirect-notice {
-            margin-top: 24px;
-            font-size: 12px;
-            color: #475569;
+            line-height: 1.5;
         }
     </style>
 </head>
@@ -197,69 +172,38 @@ LANDING_HTML = """
         <div class="logo">🧬</div>
         <h1>Pepi-Lab</h1>
         <p class="subtitle">
-            Bienvenue ! On t'envoie vers notre communauté Telegram.
+            Bienvenue ! Pour rejoindre notre communauté,<br>
+            prends connaissance des règles ci-dessous.
         </p>
-        
-        <a href="https://t.me/{{ bot_username }}?start={{ ref_code }}" 
-           class="btn-telegram" id="tg-link">
-            📲 Ouvrir dans Telegram
-        </a>
-        
-        <div class="separator"><span>Si ça ne s'ouvre pas</span></div>
-        
-        <div class="fallback">
-            <p>Ouvre Telegram, cherche <strong>@{{ bot_username }}</strong> et envoie ce message :</p>
-            <div class="code-box" onclick="copyCode()" id="code-box">
-                /code {{ ref_code }}
+
+        <div class="rules">
+            <h2>📝 Règles de la communauté</h2>
+            <div class="rule">
+                <span class="check">✔️</span>
+                <span>L'ensemble de notre catalogue est destiné exclusivement à la recherche.</span>
             </div>
-            <div class="copy-hint" id="copy-hint">Appuie pour copier</div>
-            
-            <ol class="steps">
-                <li>Ouvre Telegram</li>
-                <li>Cherche @{{ bot_username }}</li>
-                <li>Colle le message copié et envoie</li>
-            </ol>
+            <div class="rule">
+                <span class="check">✔️</span>
+                <span>Respect et courtoisie obligatoires.</span>
+            </div>
+            <div class="rule">
+                <span class="check">✔️</span>
+                <span>Pas de spam ni de démarchage privé.</span>
+            </div>
+            <div class="rule">
+                <span class="check">✔️</span>
+                <span>Discrétion absolue exigée.</span>
+            </div>
         </div>
         
-        <p class="redirect-notice" id="redirect-notice">
-            Redirection automatique dans <span id="countdown">3</span>s…
+        <a href="/ref/{{ ref_code }}/accept" class="btn-join">
+            ✅ J'accepte — Rejoindre le groupe
+        </a>
+
+        <p class="note">
+            En cliquant, tu confirmes avoir lu et accepté les règles ci-dessus.
         </p>
     </div>
-
-    <script>
-        function copyCode() {
-            navigator.clipboard.writeText("/code {{ ref_code }}").then(() => {
-                document.getElementById('copy-hint').textContent = '✅ Copié !';
-                setTimeout(() => {
-                    document.getElementById('copy-hint').textContent = 'Appuie pour copier';
-                }, 2000);
-            }).catch(() => {
-                const el = document.createElement('textarea');
-                el.value = "/code {{ ref_code }}";
-                document.body.appendChild(el);
-                el.select();
-                document.execCommand('copy');
-                document.body.removeChild(el);
-                document.getElementById('copy-hint').textContent = '✅ Copié !';
-            });
-        }
-
-        // Redirection auto via t.me (plus fiable que tg://)
-        let seconds = 3;
-        const countdownEl = document.getElementById('countdown');
-        const deepLink = "https://t.me/{{ bot_username }}?start={{ ref_code }}";
-        
-        const timer = setInterval(() => {
-            seconds--;
-            countdownEl.textContent = seconds;
-            if (seconds <= 0) {
-                clearInterval(timer);
-                window.location.href = deepLink;
-                document.getElementById('redirect-notice').textContent = 
-                    "Si Telegram ne s'ouvre pas, utilise le bouton ou le code ci-dessus.";
-            }
-        }, 1000);
-    </script>
 </body>
 </html>
 """
@@ -267,14 +211,20 @@ LANDING_HTML = """
 
 @app.route("/ref/<ref_code>")
 def referral_landing(ref_code):
+    """Page d'accueil avec les règles."""
     client_ip = request.headers.get("X-Forwarded-For", request.remote_addr)
-    log_click(ref_code, client_ip)
-    logger.info(f"Clic affilié: code={ref_code}")
-    return render_template_string(
-        LANDING_HTML,
-        ref_code=ref_code,
-        bot_username=BOT_USERNAME,
-    )
+    log_click(ref_code, client_ip, accepted=False)
+    logger.info(f"Vue page: code={ref_code}")
+    return render_template_string(LANDING_HTML, ref_code=ref_code)
+
+
+@app.route("/ref/<ref_code>/accept")
+def accept_and_join(ref_code):
+    """Le client a accepté les règles — log + redirection vers le groupe."""
+    client_ip = request.headers.get("X-Forwarded-For", request.remote_addr)
+    log_click(ref_code, client_ip, accepted=True)
+    logger.info(f"Accepté + rejoint: code={ref_code}")
+    return redirect(GROUP_LINK)
 
 
 @app.route("/")
