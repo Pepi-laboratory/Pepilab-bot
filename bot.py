@@ -479,6 +479,96 @@ async def cmd_cagnotte_admin(update: Update, context: ContextTypes.DEFAULT_TYPE)
         pass
 
 
+async def cmd_paye(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin : /paye @username virement ou /paye @username crypto — notifie + reset cagnotte."""
+    if not is_admin(update.effective_user.id):
+        return
+
+    args = context.args
+    if not args or len(args) < 2:
+        await update.message.reply_text(
+            "Usage :\n"
+            "`/paye @username virement` → notifie paiement par virement\n"
+            "`/paye @username crypto` → notifie paiement par crypto\n"
+            "`/paye 123456789 virement` → avec l'ID",
+            parse_mode="Markdown",
+        )
+        return
+
+    target = args[0].replace("@", "").strip()
+    method = " ".join(args[1:]).strip().lower()
+
+    conn = get_db()
+
+    # Chercher l'affilié
+    affiliate = None
+    if target.isdigit():
+        affiliate = conn.execute(
+            "SELECT * FROM affiliates WHERE user_id = ?", (int(target),)
+        ).fetchone()
+    if not affiliate:
+        affiliate = conn.execute(
+            "SELECT * FROM affiliates WHERE username = ? COLLATE NOCASE", (target,)
+        ).fetchone()
+    if not affiliate:
+        affiliate = conn.execute(
+            "SELECT * FROM affiliates WHERE first_name = ? COLLATE NOCASE", (target,)
+        ).fetchone()
+
+    if not affiliate:
+        conn.close()
+        await update.message.reply_text(f"❌ Ambassadeur '{target}' introuvable.")
+        return
+
+    old_cagnotte = affiliate["cagnotte"] or 0
+
+    # Déterminer le mode de paiement affiché
+    if "virement" in method or "rib" in method or "bank" in method:
+        pay_text = "virement bancaire 🏦"
+    elif "crypto" in method or "btc" in method or "usdt" in method or "eth" in method:
+        pay_text = "crypto ₿"
+    elif "bon" in method or "reduc" in method or "réduction" in method or "code" in method:
+        pay_text = "bon de réduction 🏷️"
+    else:
+        pay_text = method
+
+    # Remettre la cagnotte à 0
+    conn.execute(
+        "UPDATE affiliates SET cagnotte = 0 WHERE user_id = ?",
+        (affiliate["user_id"],),
+    )
+    conn.commit()
+    conn.close()
+
+    # Notifier l'affilié
+    try:
+        await context.bot.send_message(
+            chat_id=affiliate["user_id"],
+            text=(
+                f"💸 *Paiement effectué !*\n\n"
+                f"✅ Tu as été payé *{old_cagnotte:.2f}€* par {pay_text}.\n\n"
+                f"Merci pour ta contribution, continue comme ça ! 💪\n\n"
+                f"🏦 Ta cagnotte est remise à 0.00€"
+            ),
+            parse_mode="Markdown",
+        )
+        notif_ok = "✅ Notification envoyée"
+    except Exception:
+        notif_ok = "⚠️ Notification non envoyée (l'affilié n'a pas démarré le bot)"
+
+    # Confirmer à l'admin
+    aff_name = affiliate["first_name"]
+    aff_u = f"@{affiliate['username']}" if affiliate["username"] else f"ID:`{affiliate['user_id']}`"
+    await update.message.reply_text(
+        f"💸 *Paiement enregistré*\n\n"
+        f"👤 {aff_name} {aff_u}\n"
+        f"💰 {old_cagnotte:.2f}€ payé par {pay_text}\n"
+        f"🏦 Cagnotte remise à 0.00€\n\n"
+        f"{notif_ok}",
+        parse_mode="Markdown",
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════
 #  PAIEMENT
 # ═══════════════════════════════════════════════════════════════════════
@@ -876,6 +966,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/cagnotte @user +10 — Ajouter 10€\n"
             "/cagnotte @user -5 — Retirer 5€\n"
             "/cagnotte @user =0 — Reset\n"
+            "/paye @user virement — Notifier paiement virement\n"
+            "/paye @user crypto — Notifier paiement crypto\n"
             "/export — CSV\n"
             "/groupid — ID du chat\n\n"
             "🔧 *PUBLIC*\n"
@@ -916,6 +1008,7 @@ def main():
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("affilies", cmd_affilies))
     app.add_handler(CommandHandler("profil", cmd_profil))
+    app.add_handler(CommandHandler("paye", cmd_paye))
     app.add_handler(CommandHandler("cagnotte", cmd_cagnotte_admin))
     app.add_handler(CommandHandler("export", cmd_export))
 
