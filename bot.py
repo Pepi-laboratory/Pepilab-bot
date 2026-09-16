@@ -790,6 +790,80 @@ async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
 
+async def cmd_profil(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin : /profil @username ou /profil ID — fiche complète d'un ambassadeur."""
+    if not is_admin(update.effective_user.id):
+        return
+
+    args = context.args
+    if not args:
+        await update.message.reply_text(
+            "Usage :\n`/profil @username`\n`/profil 123456789`\n`/profil prénom`",
+            parse_mode="Markdown",
+        )
+        return
+
+    target = args[0].replace("@", "").strip()
+    conn = get_db()
+
+    # Chercher par ID, username, prénom, ou code
+    affiliate = None
+    if target.isdigit():
+        affiliate = conn.execute(
+            "SELECT * FROM affiliates WHERE user_id = ?", (int(target),)
+        ).fetchone()
+    if not affiliate:
+        affiliate = conn.execute(
+            "SELECT * FROM affiliates WHERE username = ? COLLATE NOCASE", (target,)
+        ).fetchone()
+    if not affiliate:
+        affiliate = conn.execute(
+            "SELECT * FROM affiliates WHERE first_name = ? COLLATE NOCASE", (target,)
+        ).fetchone()
+    if not affiliate:
+        affiliate = conn.execute(
+            "SELECT * FROM affiliates WHERE ref_code = ? COLLATE NOCASE", (target,)
+        ).fetchone()
+
+    if not affiliate:
+        conn.close()
+        await update.message.reply_text(f"❌ Ambassadeur '{target}' introuvable.")
+        return
+
+    # Infos de base
+    u = f"@{affiliate['username']}" if affiliate["username"] else "pas de @"
+    d = datetime.fromisoformat(affiliate["created_at"]).strftime("%d/%m/%Y %H:%M")
+    cagnotte = affiliate["cagnotte"] or 0
+    pay = _payment_label(affiliate["payment_method"]) if affiliate["payment_method"] else "❌ Non défini"
+
+    text = (
+        f"👤 *PROFIL AMBASSADEUR*\n\n"
+        f"📛 {affiliate['first_name']} {affiliate['last_name'] or ''}\n"
+        f"📱 {u}\n"
+        f"🆔 `{affiliate['user_id']}`\n"
+        f"🔗 Code : `{affiliate['ref_code']}`\n"
+        f"📅 Inscrit le : {d}\n\n"
+        f"💰 *Paiement :* {pay}\n"
+    )
+
+    # Détails de paiement complets
+    if affiliate["payment_details"]:
+        text += f"📋 *Coordonnées :*\n{affiliate['payment_details']}\n\n"
+    else:
+        text += "📋 _Aucune coordonnée enregistrée_\n\n"
+
+    text += f"🏦 *Cagnotte :* {cagnotte:.2f}€\n\n"
+
+    # Chercher les filleuls dans group_joins en croisant avec les clics
+    # On affiche les derniers membres du groupe (pas de lien direct en base,
+    # mais on peut montrer les stats de clics)
+    text += f"📊 *Lien affilié :*\n`{LANDING_URL}/ref/{affiliate['ref_code']}`\n"
+
+    conn.close()
+
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if is_admin(user.id):
@@ -797,6 +871,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🤖 *ADMIN*\n"
             "/stats — Dashboard\n"
             "/affilies — Ambassadeurs + paiements\n"
+            "/profil @user — Fiche complète d'un ambassadeur\n"
             "/cagnotte — Voir toutes les cagnottes\n"
             "/cagnotte @user +10 — Ajouter 10€\n"
             "/cagnotte @user -5 — Retirer 5€\n"
@@ -840,6 +915,7 @@ def main():
     # Commandes admin
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("affilies", cmd_affilies))
+    app.add_handler(CommandHandler("profil", cmd_profil))
     app.add_handler(CommandHandler("cagnotte", cmd_cagnotte_admin))
     app.add_handler(CommandHandler("export", cmd_export))
 
