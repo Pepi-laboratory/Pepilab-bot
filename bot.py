@@ -102,23 +102,20 @@ def generate_ref_code(user_id: int) -> str:
 # ═══════════════════════════════════════════════════════════════════════
 
 async def track_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Détecte quand quelqu'un rejoint le groupe et notifie l'admin."""
+    """Détecte quand quelqu'un rejoint le groupe et notifie l'admin avec l'affilié."""
     result = update.chat_member
     if result is None:
         return
 
-    # Vérifier que c'est bien notre groupe
     if result.chat.id != GROUP_CHAT_ID:
         return
 
     old = result.old_chat_member
     new = result.new_chat_member
 
-    # Nouveau membre (était pas membre → est membre maintenant)
     if old.status in ("left", "kicked") and new.status in ("member", "restricted"):
         user = new.user
 
-        # Ignorer les bots
         if user.is_bot:
             return
 
@@ -132,6 +129,40 @@ async def track_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
              user.last_name or "", datetime.now().isoformat()),
         )
         conn.commit()
+
+        # ── Chercher quel affilié l'a envoyé via la landing page ──
+        affiliate_info = ""
+        try:
+            import urllib.request
+            import json
+            url = f"{LANDING_URL}/api/recent-accepts"
+            req = urllib.request.Request(url, headers={"User-Agent": "PepiLabBot"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                recent = json.loads(resp.read().decode())
+            
+            if recent:
+                # Prendre le clic le plus récent
+                ref_code = recent[0]["ref_code"]
+                clicked_at = recent[0]["clicked_at"]
+                
+                # Chercher l'affilié correspondant
+                affiliate = conn.execute(
+                    "SELECT * FROM affiliates WHERE ref_code = ?", (ref_code,)
+                ).fetchone()
+                
+                if affiliate:
+                    aff_name = affiliate["first_name"]
+                    aff_username = f"@{affiliate['username']}" if affiliate["username"] else f"ID:`{affiliate['user_id']}`"
+                    affiliate_info = (
+                        f"\n\n🤝 *Parrainé par :* {aff_name} {aff_username}\n"
+                        f"🔗 Code : `{ref_code}`"
+                    )
+                else:
+                    affiliate_info = f"\n\n🔗 Code affilié : `{ref_code}` (ambassadeur non trouvé)"
+        except Exception as e:
+            logger.error(f"Erreur lookup affilié: {e}")
+            affiliate_info = "\n\n🔗 _Affilié non identifié_"
+
         conn.close()
 
         logger.info(f"Nouveau membre: {user.first_name} (ID:{user.id})")
@@ -147,6 +178,7 @@ async def track_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"📱 @{user.username or 'aucun username'}\n"
                         f"🆔 `{user.id}`\n"
                         f"🕐 {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+                        f"{affiliate_info}"
                     ),
                     parse_mode="Markdown",
                 )
