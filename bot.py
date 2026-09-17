@@ -905,6 +905,124 @@ async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
 
+async def cmd_qui(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin : /qui @username ou /qui ID — cherche qui a parrainé cette personne."""
+    if not is_admin(update.effective_user.id):
+        return
+
+    args = context.args
+    if not args:
+        await update.message.reply_text(
+            "Usage :\n"
+            "`/qui @username` → qui a parrainé cette personne\n"
+            "`/qui 123456789` → recherche par ID\n"
+            "`/qui prénom` → recherche par prénom\n\n"
+            "💡 Tu peux aussi *transférer un message* de quelqu'un au bot "
+            "et il te dira qui l'a parrainé.",
+            parse_mode="Markdown",
+        )
+        return
+
+    target = args[0].replace("@", "").strip()
+    await _lookup_member(update, target)
+
+
+async def handle_forwarded_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Quand l'admin transfère un message au bot, cherche qui a parrainé l'expéditeur."""
+    if not is_admin(update.effective_user.id):
+        return
+    if update.effective_chat.type != "private":
+        return
+
+    fwd = update.message.forward_origin
+    if fwd is None:
+        return
+
+    # Récupérer l'ID de l'expéditeur original
+    user_id = None
+    user_name = None
+
+    if hasattr(fwd, "sender_user") and fwd.sender_user:
+        user_id = fwd.sender_user.id
+        user_name = fwd.sender_user.first_name
+    elif hasattr(update.message, "forward_from") and update.message.forward_from:
+        user_id = update.message.forward_from.id
+        user_name = update.message.forward_from.first_name
+
+    if user_id:
+        await _lookup_member(update, str(user_id))
+    elif user_name:
+        await _lookup_member(update, user_name)
+    else:
+        await update.message.reply_text(
+            "⚠️ Impossible d'identifier l'expéditeur — "
+            "il a peut-être masqué son profil.\n"
+            "Essaie avec `/qui` + son prénom ou ID.",
+            parse_mode="Markdown",
+        )
+
+
+async def _lookup_member(update: Update, target: str):
+    """Cherche un membre du groupe et affiche qui l'a parrainé."""
+    conn = get_db()
+
+    member = None
+    if target.isdigit():
+        member = conn.execute(
+            "SELECT * FROM group_joins WHERE user_id = ?", (int(target),)
+        ).fetchone()
+    if not member:
+        member = conn.execute(
+            "SELECT * FROM group_joins WHERE username = ? COLLATE NOCASE", (target,)
+        ).fetchone()
+    if not member:
+        member = conn.execute(
+            "SELECT * FROM group_joins WHERE first_name = ? COLLATE NOCASE", (target,)
+        ).fetchone()
+
+    if not member:
+        conn.close()
+        await update.message.reply_text(f"❌ Membre '{target}' introuvable dans le groupe.")
+        return
+
+    u = f"@{member['username']}" if member["username"] else "pas de @"
+    d = datetime.fromisoformat(member["joined_at"]).strftime("%d/%m/%Y %H:%M")
+
+    text = (
+        f"🔍 *FICHE MEMBRE*\n\n"
+        f"👤 {member['first_name']} {member['last_name'] or ''}\n"
+        f"📱 {u}\n"
+        f"🆔 `{member['user_id']}`\n"
+        f"📅 Rejoint le : {d}\n\n"
+    )
+
+    if member["referred_by_code"] and member["referred_by_user_id"]:
+        # Chercher les infos à jour du parrain
+        affiliate = conn.execute(
+            "SELECT * FROM affiliates WHERE user_id = ?",
+            (member["referred_by_user_id"],),
+        ).fetchone()
+
+        if affiliate:
+            aff_u = f"@{affiliate['username']}" if affiliate["username"] else "pas de @"
+            text += (
+                f"🤝 *Parrainé par :*\n"
+                f"  📛 {affiliate['first_name']}\n"
+                f"  📱 {aff_u}\n"
+                f"  🆔 `{affiliate['user_id']}`\n"
+                f"  🔗 Code : `{member['referred_by_code']}`"
+            )
+        else:
+            text += f"🤝 Parrainé par code `{member['referred_by_code']}` (ambassadeur supprimé)"
+    elif member["referred_by_code"]:
+        text += f"🔗 Code affilié : `{member['referred_by_code']}` (ambassadeur non trouvé)"
+    else:
+        text += "🤝 _Pas de parrain identifié_ (arrivé sans lien d'affilié)"
+
+    conn.close()
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
 async def cmd_profil(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin : /profil @username ou /profil ID — fiche complète d'un ambassadeur."""
     if not is_admin(update.effective_user.id):
@@ -1006,6 +1124,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/stats — Dashboard\n"
             "/affilies — Ambassadeurs + paiements\n"
             "/profil @user — Fiche complète d'un ambassadeur\n"
+            "/qui @user — Qui a parrainé cette personne\n"
             "/cagnotte — Voir toutes les cagnottes\n"
             "/cagnotte @user +10 — Ajouter 10€\n"
             "/cagnotte @user -5 — Retirer 5€\n"
@@ -1053,9 +1172,13 @@ def main():
     app.add_handler(CommandHandler("affilies", cmd_affilies))
     app.add_handler(CommandHandler("profil", cmd_profil))
     app.add_handler(CommandHandler("profile", cmd_profil))
+    app.add_handler(CommandHandler("qui", cmd_qui))
     app.add_handler(CommandHandler("paye", cmd_paye))
     app.add_handler(CommandHandler("cagnotte", cmd_cagnotte_admin))
     app.add_handler(CommandHandler("export", cmd_export))
+
+    # Message transféré (forwarded) → lookup automatique
+    app.add_handler(MessageHandler(filters.FORWARDED & filters.ChatType.PRIVATE, handle_forwarded_message))
 
     # Texte libre (RIB / wallet)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_input))
