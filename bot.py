@@ -92,6 +92,20 @@ def init_db():
         );
     """)
     conn.commit()
+
+    # Migration : ajouter les nouvelles colonnes si la table existe déjà sans elles
+    for col, default in [
+        ("referred_by_code", "''"),
+        ("referred_by_user_id", "0"),
+        ("referred_by_name", "''"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE group_joins ADD COLUMN {col} TEXT DEFAULT {default}")
+            conn.commit()
+            logger.info(f"Colonne {col} ajoutée à group_joins")
+        except Exception:
+            pass  # La colonne existe déjà
+
     conn.close()
     logger.info("DB initialisée.")
 
@@ -1038,6 +1052,7 @@ def main():
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("affilies", cmd_affilies))
     app.add_handler(CommandHandler("profil", cmd_profil))
+    app.add_handler(CommandHandler("profile", cmd_profil))
     app.add_handler(CommandHandler("paye", cmd_paye))
     app.add_handler(CommandHandler("cagnotte", cmd_cagnotte_admin))
     app.add_handler(CommandHandler("export", cmd_export))
