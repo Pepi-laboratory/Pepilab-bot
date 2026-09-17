@@ -85,6 +85,9 @@ def init_db():
             username        TEXT,
             first_name      TEXT,
             last_name       TEXT,
+            referred_by_code    TEXT DEFAULT '',
+            referred_by_user_id INTEGER DEFAULT 0,
+            referred_by_name    TEXT DEFAULT '',
             joined_at       TEXT NOT NULL
         );
     """)
@@ -119,19 +122,14 @@ async def track_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user.is_bot:
             return
 
-        # Logger dans la base
+        # Logger dans la base (on met à jour après avec l'affilié)
         conn = get_db()
-        conn.execute(
-            """INSERT OR IGNORE INTO group_joins 
-               (user_id, username, first_name, last_name, joined_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (user.id, user.username or "", user.first_name or "",
-             user.last_name or "", datetime.now().isoformat()),
-        )
-        conn.commit()
 
         # ── Chercher quel affilié l'a envoyé via la landing page ──
         affiliate_info = ""
+        ref_code_found = ""
+        affiliate_user_id = 0
+        affiliate_name = ""
         try:
             import urllib.request
             import json
@@ -141,28 +139,38 @@ async def track_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 recent = json.loads(resp.read().decode())
             
             if recent:
-                # Prendre le clic le plus récent
-                ref_code = recent[0]["ref_code"]
-                clicked_at = recent[0]["clicked_at"]
+                ref_code_found = recent[0]["ref_code"]
                 
-                # Chercher l'affilié correspondant
                 affiliate = conn.execute(
-                    "SELECT * FROM affiliates WHERE ref_code = ?", (ref_code,)
+                    "SELECT * FROM affiliates WHERE ref_code = ?", (ref_code_found,)
                 ).fetchone()
                 
                 if affiliate:
-                    aff_name = affiliate["first_name"]
+                    affiliate_user_id = affiliate["user_id"]
+                    affiliate_name = affiliate["first_name"]
                     aff_username = f"@{affiliate['username']}" if affiliate["username"] else "pas de @"
                     affiliate_info = (
-                        f"\n\n🤝 *Parrainé par :* {aff_name} {aff_username}\n"
-                        f"🆔 ID parrain : `{affiliate['user_id']}`\n"
-                        f"🔗 Code : `{ref_code}`"
+                        f"\n\n🤝 *Parrainé par :* {affiliate_name} {aff_username}\n"
+                        f"🆔 ID parrain : `{affiliate_user_id}`\n"
+                        f"🔗 Code : `{ref_code_found}`"
                     )
                 else:
-                    affiliate_info = f"\n\n🔗 Code affilié : `{ref_code}` (ambassadeur non trouvé)"
+                    affiliate_info = f"\n\n🔗 Code affilié : `{ref_code_found}` (ambassadeur non trouvé)"
         except Exception as e:
             logger.error(f"Erreur lookup affilié: {e}")
             affiliate_info = "\n\n🔗 _Affilié non identifié_"
+
+        # Sauvegarder le nouveau membre avec son parrain
+        conn.execute(
+            """INSERT OR IGNORE INTO group_joins 
+               (user_id, username, first_name, last_name, 
+                referred_by_code, referred_by_user_id, referred_by_name, joined_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user.id, user.username or "", user.first_name or "",
+             user.last_name or "", ref_code_found, affiliate_user_id,
+             affiliate_name, datetime.now().isoformat()),
+        )
+        conn.commit()
 
         conn.close()
 
@@ -826,26 +834,29 @@ async def cmd_affilies(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     conn = get_db()
     rows = conn.execute("SELECT * FROM affiliates ORDER BY cagnotte DESC").fetchall()
-    conn.close()
 
     if not rows:
+        conn.close()
         await update.message.reply_text("Aucun ambassadeur.")
         return
 
     text = "👥 *AMBASSADEURS*\n\n"
     for a in rows:
-        u = f"@{a['username']}" if a["username"] else "—"
+        u = f"@{a['username']}" if a["username"] else f"ID:`{a['user_id']}`"
         d = datetime.fromisoformat(a["created_at"]).strftime("%d/%m/%Y")
         pay = _payment_label(a["payment_method"]) if a["payment_method"] else "❌"
         c = a["cagnotte"] or 0
-        det = ""
-        if a["payment_details"]:
-            det = f"\n  📋 `{a['payment_details']}`"
+
+        nb = conn.execute(
+            "SELECT COUNT(*) as c FROM group_joins WHERE referred_by_code = ?",
+            (a["ref_code"],),
+        ).fetchone()["c"]
+
         text += (
             f"• *{a['first_name']} {a['last_name'] or ''}*\n"
-            f"  {u} | ID: `{a['user_id']}`\n"
-            f"  Code: `{a['ref_code']}` | 💰 {pay} | 🏦 {c:.2f}€ | {d}{det}\n\n"
+            f"  {u} | 👥 {nb} filleuls | 🏦 {c:.2f}€ | {pay}\n\n"
         )
+    conn.close()
     for i in range(0, len(text), 4000):
         await update.message.reply_text(text[i:i+4000], parse_mode="Markdown")
 
@@ -944,14 +955,33 @@ async def cmd_profil(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text += f"🏦 *Cagnotte :* {cagnotte:.2f}€\n\n"
 
-    # Chercher les filleuls dans group_joins en croisant avec les clics
-    # On affiche les derniers membres du groupe (pas de lien direct en base,
-    # mais on peut montrer les stats de clics)
-    text += f"📊 *Lien affilié :*\n`{LANDING_URL}/ref/{affiliate['ref_code']}`\n"
+    # Chercher les filleuls
+    ref_code = affiliate["ref_code"]
+    filleuls = conn.execute(
+        """SELECT first_name, username, user_id, joined_at 
+           FROM group_joins WHERE referred_by_code = ?
+           ORDER BY joined_at DESC""",
+        (ref_code,),
+    ).fetchall()
+
+    nb = len(filleuls)
+    text += f"👥 *Filleuls : {nb}*\n"
+
+    if filleuls:
+        text += "\n"
+        for f in filleuls:
+            fu = f"@{f['username']}" if f["username"] else f"ID:`{f['user_id']}`"
+            fd = datetime.fromisoformat(f["joined_at"]).strftime("%d/%m/%Y")
+            text += f"  • {f['first_name']} {fu} — {fd}\n"
+    else:
+        text += "_Aucun filleul pour le moment_\n"
+
+    text += f"\n📊 *Lien affilié :*\n`{LANDING_URL}/ref/{ref_code}`\n"
 
     conn.close()
 
-    await update.message.reply_text(text, parse_mode="Markdown")
+    for i in range(0, len(text), 4000):
+        await update.message.reply_text(text[i:i+4000], parse_mode="Markdown")
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
